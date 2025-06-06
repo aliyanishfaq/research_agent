@@ -140,14 +140,6 @@ You can modify the following parameters in `run_agent.py`:
 - **Depth** (1-5): More depth = more sources per query
 - **Models**: Change AI models in `nodes.py` if needed
 
-### API Rate Limits
-
-The agent includes built-in rate limiting and error handling for:
-- SerpAPI search requests
-- FireCrawl content extraction
-- OpenAI API calls
-
-
 
 ## API Key Setup Instructions
 
