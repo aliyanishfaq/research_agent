@@ -82,7 +82,7 @@ def serp_queries(state: ResearchState) -> ResearchState:
     user_query = state.get("user_query")
     clarification_questions = state.get("clarification_questions", [])
     clarification_answers = state.get("clarification_answers", [])
-    num_queries = state.get("breadth", 3)
+    num_queries = state.get("breadth", 4)
 
     clarification = clarification_context(clarification_questions, clarification_answers)
 
@@ -169,6 +169,7 @@ def draft_report(state: ResearchState) -> ResearchState:
     response = openai_reasoning_llm.invoke(deep_research_report_prompt)
     print(f"Deep Research Report generated")
     state["draft_report"] = response.content
+    state["messages"].append(AIMessage(content=response.content))
     return state
 
 def final_report(state: ResearchState) -> ResearchState:
