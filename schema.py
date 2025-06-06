@@ -12,6 +12,8 @@ class SearchQueries(BaseModel):
 class ResearchState(TypedDict):
     messages: List[BaseMessage]
     user_query: str
+    breadth: int
+    depth: int
     clarification_questions: List[str]
     clarification_answers: List[str]
     search_queries: List[str]

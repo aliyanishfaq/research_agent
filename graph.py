@@ -30,7 +30,7 @@ graph.add_conditional_edges(
     "understand",
     is_clarification_needed,
     {
-        True: "understand",
+        True: END,
         False: "generate_queries"
     }
 )

@@ -1,12 +1,13 @@
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 from langgraph.graph import StateGraph, END
 from typing import TypedDict, List, Dict
-from prompts import CLARIFICATION_REQUIRED_PROMPT, SEARCH_QUERY_GENERATION_PROMPT, PAGE_CONTENT_SUMMARY_PROMPT
+from prompts import CLARIFICATION_REQUIRED_PROMPT, SEARCH_QUERY_GENERATION_PROMPT, PAGE_CONTENT_SUMMARY_PROMPT, DEEP_RESEARCH_REPORT_PROMPT
 from schema import ClarificationRequired, SearchQueries, ResearchState, PageSummary
 from langchain_community.utilities import SerpAPIWrapper
 from firecrawl import FirecrawlApp
 from langchain_openai import ChatOpenAI
 from dotenv import load_dotenv
+from helpers import clarification_context
 import os
 
 
@@ -17,8 +18,9 @@ os.environ["SERPAPI_API_KEY"] = os.getenv("SERPAPI_API_KEY")
 os.environ["FIRECRAWL_API_KEY"] = os.getenv("FIRECRAWL_API_KEY")
 
 
-openai_llm = ChatOpenAI(model="gpt-4o", temperature=0)
+openai_llm = ChatOpenAI(model="gpt-4.1", temperature=0)
 firecrawl_app = FirecrawlApp(api_key=os.getenv("FIRECRAWL_API_KEY"))
+openai_reasoning_llm = ChatOpenAI(model="o1")
 
 
 
@@ -28,8 +30,6 @@ def understand_query(state: ResearchState) -> ResearchState:
     """
     messages = state.get("messages", [])
     user_query = state.get("user_query")
-
-    return state
         
     return check_for_clarification(state)
 
@@ -48,9 +48,8 @@ def check_for_clarification(state: ResearchState) -> ResearchState:
     clarification_answers = state.get("clarification_answers", [])
 
     context = f"User's original research query: {user_query}\n"
-    if clarification_answers:
-        for i, (q, a) in enumerate(zip(clarification_questions, clarification_answers)):
-            context += f"Question {i+1}: {q}\nAnswer {i+1}: {a}\n"
+    if len(clarification_questions) > 0:
+        context += f"Follow up questions asked previously from the user: {clarification_context(clarification_questions, clarification_answers)}\n"
     
     analysis_prompt = CLARIFICATION_REQUIRED_PROMPT.format(context=context, num_questions=len(clarification_questions))
     openai_llm_structured = openai_llm.with_structured_output(ClarificationRequired)
@@ -80,15 +79,11 @@ def serp_queries(state: ResearchState) -> ResearchState:
     clarification_answers = state.get("clarification_answers", [])
     num_queries = state.get("breadth", 3)
 
-    context = "\n"
-    if clarification_answers:
-        for i, (q, a) in enumerate(zip(clarification_questions, clarification_answers)):
-            context += f"Question {i+1}: {q}\nAnswer {i+1}: {a}\n\n"
+    clarification = clarification_context(clarification_questions, clarification_answers)
 
-    search_query_prompt = SEARCH_QUERY_GENERATION_PROMPT.format(user_query=user_query, num_queries=num_queries, clarification_context=context)
+    search_query_prompt = SEARCH_QUERY_GENERATION_PROMPT.format(user_query=user_query, num_queries=num_queries, clarification_context=clarification)
     openai_llm_structured = openai_llm.with_structured_output(SearchQueries)
     response = openai_llm_structured.invoke(search_query_prompt)
-    print(f"Search queries: {response.search_queries}") 
     state["search_queries"] = response.search_queries or []
     return state
 
@@ -109,7 +104,6 @@ def search_results(state: ResearchState) -> ResearchState:
         else:
             query_map[query] = [search_result['link'] for search_result in search_results['organic_results']]
 
-    print(f"Query map: {query_map}")
     state["search_urls"] = query_map
 
     return state
@@ -118,26 +112,28 @@ def scrape_urls(state: ResearchState) -> ResearchState:
     """
     Scrape the content from the search results
     """
-    print(f"Scraping urls: {state.get('search_urls')}")
     search_urls = state.get("search_urls", {})
 
 
     for query, urls in search_urls.items():
         relevant_content = ""
         for url in urls:
+            print(f"Reading from url: {url}")
             try:
                 response = firecrawl_app.scrape_url(url, formats=["markdown", "html"])
 
             except Exception as e:
-                print(f"Error scraping url: {url}")
+
                 continue
+
+            context = clarification_context(state.get("clarification_questions", []), state.get("clarification_answers", []))
             
             page_summary_prompt = PAGE_CONTENT_SUMMARY_PROMPT.format(user_query=state.get("user_query"), 
-                                                                     clarification_context=state.get("clarification_context"), 
+                                                                     clarification_context=context, 
                                                                      page_content=response.markdown)
             openai_llm_structured = openai_llm.with_structured_output(PageSummary)
             response = openai_llm_structured.invoke(page_summary_prompt)
-            print(f"Response: {response}")
+
             content = f"""
             --------------------------------
             PAGE URL: {url}
@@ -145,7 +141,7 @@ def scrape_urls(state: ResearchState) -> ResearchState:
             --------------------------------
             """
             relevant_content += content
-        print(f"Relevant content: {relevant_content}")
+
         state["query_content"][query] = relevant_content
 
     return state
@@ -156,19 +152,26 @@ def draft_report(state: ResearchState) -> ResearchState:
     Generate a draft report based on the search results
     """
     query_content = state.get("query_content", {})
-    content = "Web Search Results:\n"
+    web_search_results = "Web Search Results:\n"
     for query, content in query_content.items():
         if content:
-            content += f"Query: {query}\n"
-            content += f"Content: {content}\n"
-            content += "--------------------------------\n"
+            web_search_results += f"Query: {query}\n"
+            web_search_results += f"Content: {content}\n"
+            web_search_results += "--------------------------------\n"
 
+    clarification = clarification_context(state.get("clarification_questions", []), state.get("clarification_answers", []))
+    deep_research_report_prompt = DEEP_RESEARCH_REPORT_PROMPT.format(search_results_content=web_search_results, user_query=state.get("user_query"), clarification_context=clarification)
+    response = openai_reasoning_llm.invoke(deep_research_report_prompt)
+    print(f"Deep Research Report generated")
+    state["draft_report"] = response.content
     return state
-
 
 def final_report(state: ResearchState) -> ResearchState:
     """
     Generate a final report based on the draft report
     """
-    
+    draft_report = state.get("draft_report", "")
+    with open("final_report.txt", "w") as f:
+        f.write(draft_report)
+    state["final_report"] = draft_report
     return state

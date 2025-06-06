@@ -9,6 +9,12 @@ async def run_research():
     """
 
     initial_research_question = input("What would you like to research?\n")
+    breadth = int(input("How wide should the research be? (3-8)\n"))
+    depth = int(input("How narrow should the focus on topics be? (4-6)\n"))
+
+    breadth =  max(3, min(breadth, 8))
+    depth =  max(4, min(depth, 6))
+
 
     state = {
         "messages": [HumanMessage(content=initial_research_question)],
@@ -26,16 +32,12 @@ async def run_research():
     while not state.get("final_report"):
         state = await app.ainvoke(state)
 
-        if state.get("is_clarification_needed") and state.get("clarification_questions"):
+        if state.get("is_clarification_needed") and len(state.get("clarification_questions")) > len(state.get("clarification_answers")):
             question = state.get("clarification_questions")[-1]
             print(f"Follow Up Question: {question}")
             answer = input("Answer: ")
             state["clarification_answers"].append(answer)
         
-        break
-
-
-    print(f"Final Report: {state.get('final_report')}")
 
 if __name__ == "__main__":
     asyncio.run(run_research())
