@@ -3,6 +3,11 @@ from typing import List, Dict
 from langchain_core.messages import HumanMessage
 from graph import app
 
+import os
+from dotenv import load_dotenv
+load_dotenv()
+
+
 async def run_research():
     """
     Runs the research agent with the user input
